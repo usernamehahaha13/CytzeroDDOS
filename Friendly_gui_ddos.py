@@ -1112,7 +1112,7 @@ class CytzeroGUI:
         
         credits_label = ctk.CTkLabel(
             credits_frame,
-            text="CYTZERO TEAM © 2024",
+            text="CYTZERO TEAM © 2025",
             font=("Helvetica", 10)
         )
         credits_label.pack()
